@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Precision Drop</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-6px); }
+            40%, 80% { transform: translateX(6px); }
+        }
+        .shake { animation: shake 0.3s ease-in-out; }
+    </style>
+</head>
+<body class="bg-slate-950 text-white min-h-screen flex flex-col items-center justify-center font-sans select-none overflow-hidden">
+
+    <!-- Game Container -->
+    <div id="game-card" class="bg-slate-900/80 backdrop-blur-md border border-slate-800 p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-md w-full mx-4 transition-all duration-200">
+        
+        <!-- Header -->
+        <div class="text-center mb-6">
+            <h1 class="text-3xl font-black tracking-wider bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">PRECISION DROP</h1>
+            <p class="text-slate-400 text-sm mt-1">Stop the block right inside the target zone!</p>
+        </div>
+
+        <!-- Stats Bar -->
+        <div class="flex justify-between w-full mb-4 px-2 text-sm font-semibold text-slate-300">
+            <div class="bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700/50">
+                Score: <span id="score-val" class="text-emerald-400 font-bold text-lg">0</span>
+            </div>
+            <div class="bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700/50">
+                Best: <span id="best-val" class="text-cyan-400 font-bold text-lg">0</span>
+            </div>
+        </div>
+
+        <!-- Canvas -->
+        <div class="relative rounded-2xl overflow-hidden border-2 border-slate-700/60 shadow-inner bg-slate-950">
+            <canvas id="gameCanvas" width="340" height="180" class="cursor-pointer block"></canvas>
+            
+            <!-- Tap/Action Overlay Message -->
+            <div id="overlay-msg" class="absolute inset-0 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs transition-opacity duration-300">
+                <span class="text-lg font-bold text-emerald-400 animate-pulse tracking-wide">TAP OR PRESS SPACE TO START</span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <button id="action-btn" class="mt-6 w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-extrabold text-lg rounded-2xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer">
+            STOP / JUMP
+        </button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const scoreEl = document.getElementById("score-val");
+        const bestEl = document.getElementById("best-val");
+        const overlay = document.getElementById("overlay-msg");
+        const card = document.getElementById("game-card");
+        const actionBtn = document.getElementById("action-btn");
+
+        let audioCtx = null;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playSound(type) {
+            try {
+                initAudio();
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                const now = audioCtx.currentTime;
+
+                if (type === 'success') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(300, now);
+                    osc.frequency.exponentialRampToValueAtTime(800, now + 0.15);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+                    osc.start(now);
+                    osc.stop(now + 0.15);
+                } else if (type === 'fail') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(150, now);
+                    osc.frequency.linearRampToValueAtTime(60, now + 0.3);
+                    gain.gain.setValueAtTime(0.4, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                } else if (type === 'click') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(400, now);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                    osc.start(now);
+                    osc.stop(now + 0.05);
+                }
+            } catch (e) {}
+        }
+
+        let x = 10;
+        let speed = 3.5;
+        let score = 0;
+        let highScore = localStorage.getItem("precision_best") || 0;
+        let gameState = "IDLE";
+        
+        const blockWidth = 24;
+        let targetWidth = 65;
+        let targetX = canvas.width / 2 - targetWidth / 2;
+
+        bestEl.innerText = highScore;
+
+        function resetGameVals() {
+            x = 10;
+            speed = 3.5;
+            score = 0;
+            targetWidth = 65;
+            targetX = canvas.width / 2 - targetWidth / 2;
+            scoreEl.innerText = score;
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = "rgba(16, 185, 129, 0.15)";
+            ctx.fillRect(targetX, 30, targetWidth, 120);
+            ctx.strokeStyle = "#10b981";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(targetX, 30, targetWidth, 120);
+            ctx.setLineDash([]);
+
+            ctx.fillStyle = "#34d399";
+            ctx.fillRect(targetX + targetWidth / 2 - 1, 30, 2, 120);
+
+            ctx.fillStyle = gameState === "GAMEOVER" ? "#f43f5e" : "#38bdf8";
+            ctx.shadowColor = gameState === "GAMEOVER" ? "#f43f5e" : "#38bdf8";
+            ctx.shadowBlur = 10;
+            ctx.fillRect(x, 40, blockWidth, 100);
+            ctx.shadowBlur = 0;
+
+            if (gameState === "PLAYING") {
+                x += speed;
+                if (x + blockWidth > canvas.width || x < 0) {
+                    speed = -speed;
+                }
+                requestAnimationFrame(drawGame);
+            }
+        }
+
+        function handleAction() {
+            playSound('click');
+            if (gameState === "IDLE" || gameState === "GAMEOVER") {
+                resetGameVals();
+                gameState = "PLAYING";
+                overlay.style.opacity = "0";
+                setTimeout(() => overlay.style.display = "none", 300);
+                drawGame();
+                return;
+            }
+
+            if (gameState === "PLAYING") {
+                const blockCenter = x + blockWidth / 2;
+                const targetCenterMin = targetX;
+                const targetCenterMax = targetX + targetWidth;
+
+                if (blockCenter >= targetCenterMin && blockCenter <= targetCenterMax) {
+                    playSound('success');
+                    score++;
+                    scoreEl.innerText = score;
+                    
+                    if (score > highScore) {
+                        highScore = score;
+                        bestEl.innerText = highScore;
+                        localStorage.setItem("precision_best", highScore);
+                    }
+
+                    speed *= 1.12;
+                    if (speed > 0) speed += 0.4; else speed -= 0.4;
+                    targetWidth = Math.max(35, targetWidth - 3);
+                    targetX = Math.random() * (canvas.width - targetWidth - 40) + 20;
+                    x = 10;
+                } else {
+                    playSound('fail');
+                    gameState = "GAMEOVER";
+                    card.classList.add("shake");
+                    setTimeout(() => card.classList.remove("shake"), 300);
+
+                    overlay.style.display = "flex";
+                    setTimeout(() => overlay.style.opacity = "1", 10);
+                    overlay.innerHTML = `<span class="text-rose-400 font-extrabold text-lg tracking-wide">GAME OVER! Score: ${score}<br><span class="text-xs text-slate-400 font-normal">Tap to try again</span></span>`;
+                    drawGame();
+                }
+            }
+        }
+
+        actionBtn.addEventListener("click", handleAction);
+        canvas.addEventListener("click", handleAction);
+        window.addEventListener("keydown", (e) => {
+            if (e.code === "Space") {
+                e.preventDefault();
+                handleAction();
+            }
+        });
+
+        drawGame();
+    </script>
+</body>
+</html>
